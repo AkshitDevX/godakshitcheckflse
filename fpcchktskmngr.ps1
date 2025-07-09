@@ -1,115 +1,112 @@
-# Credit: GOD AKSHIT | CODERS CORP ///: discord.gg/hindustan
+# Credit: GOD AKSHIT | CODERS CORP /// discord.gg/hindustan
 
-function Create-StealthFiles {
-    $locations = @(
+function Create-StealthIMGUI {
+    $fakeContent = @"
+[Window][General]
+Pos=0,0
+Size=800,550
+Collapsed=0
+
+[Window][Debug##Default]
+Pos=60,60
+Size=400,400
+Collapsed=0
+"@ + "`n" * 1024 * 120  # Pad to ~123 KB
+
+    $targets = @(
         "$env:windir\System32\imgui.ini",
         "$env:ProgramFiles\imgui.ini"
     )
-    foreach ($loc in $locations) {
-        try {
-            if (-not (Test-Path $loc)) {
-                [System.IO.File]::WriteAllText($loc, "")
-            }
-        } catch {}
-    }
 
-    # Downloads\Microsoft\imgui.ini
-    $downloads = Join-Path $env:USERPROFILE "Downloads"
-    $msFolder = Join-Path $downloads "Microsoft"
-    try {
-        if (-not (Test-Path $msFolder)) {
-            New-Item -ItemType Directory -Path $msFolder -Force | Out-Null
+    foreach ($path in $targets) {
+        try {
+            if (-not (Test-Path $path)) {
+                Set-Content -Path $path -Value $fakeContent -Encoding ASCII -Force
+                $fs = [System.IO.File]::OpenWrite($path)
+                $fs.SetLength(126976) # ~124 KB
+                $fs.Close()
+
+                # Set timestamp to 3 days ago
+                (Get-Item $path).LastWriteTime = (Get-Date).AddDays(-3)
+            }
+        } catch {
+            Write-Host "⚠️ Failed to create: $path"
         }
-        $imguiFile = Join-Path $msFolder "imgui.ini"
-        if (-not (Test-Path $imguiFile)) {
-            [System.IO.File]::WriteAllText($imguiFile, "")
-        }
-    } catch {}
+    }
 }
 
-# Create stealth files at start
-Create-StealthFiles
-
 function Monitor-HDPlayer {
-    Write-Host "`n📡 Monitoring HD-Player activity..." -ForegroundColor Cyan
+    Write-Host "`n🔍 Waiting for HD-Player process to start..." -ForegroundColor Yellow
 
-    # Initial state snapshot
     $initialProcs = Get-Process | Select-Object Name, Id
-    $initialServices = Get-Service | Where-Object {$_.Status -eq "Running"} | Select-Object Name, DisplayName
+    $initialSvcs = Get-Service | Where-Object {$_.Status -eq "Running"} | Select-Object Name, DisplayName
 
-    # Wait until HD-Player starts
     while (-not (Get-Process -Name "HD-Player" -ErrorAction SilentlyContinue)) {
         Start-Sleep -Seconds 1
     }
 
-    Write-Host "`n✅ HD-Player started. Tracking..." -ForegroundColor Green
+    $hdpProc = Get-Process -Name "HD-Player"
+    $hdpPID = $hdpProc.Id
+    $hdpSID = $hdpProc.SessionId
+    Write-Host "`n✅ HD-Player detected (PID: $hdpPID). Monitoring..." -ForegroundColor Green
 
-    $hdpPID = (Get-Process -Name "HD-Player").Id
+    $runtimeOverlay = @()
+    do {
+        $currentProcs = Get-Process
+        $overlay = $currentProcs | Where-Object {
+            $_.SessionId -eq $hdpSID -and $_.MainWindowTitle -eq "" -and $_.Id -ne $hdpPID
+        } | Select-Object Name, Id
+        $runtimeOverlay += $overlay
 
-    # While HD-Player is running
-    $overlayCandidates = @()
-    while (Get-Process -Id $hdpPID -ErrorAction SilentlyContinue) {
-        $currentProcs = Get-Process | Select-Object Name, Id
-        $currentServices = Get-Service | Where-Object {$_.Status -eq "Running"} | Select-Object Name, DisplayName
-
-        # Check for overlay/background-like processes (child/injected/loaded in same session)
-        $possibleOverlay = Get-Process |
-            Where-Object {
-                $_.MainWindowTitle -eq "" -and
-                $_.SessionId -eq (Get-Process -Id $hdpPID).SessionId -and
-                $_.Id -ne $hdpPID
-            } | Select-Object Name, Id
-
-        $overlayCandidates += $possibleOverlay
         Start-Sleep -Seconds 2
-    }
+    } while (Get-Process -Id $hdpPID -ErrorAction SilentlyContinue)
 
-    Write-Host "`n🛑 HD-Player has exited. Analyzing state..." -ForegroundColor Red
+    Write-Host "`n🛑 HD-Player exited. Analyzing activity..." -ForegroundColor Red
 
     $finalProcs = Get-Process | Select-Object Name, Id
-    $finalServices = Get-Service | Where-Object {$_.Status -eq "Running"} | Select-Object Name, DisplayName
+    $finalSvcs = Get-Service | Where-Object {$_.Status -eq "Running"} | Select-Object Name, DisplayName
 
-    # Compare start and end states
-    $startedProcs = $finalProcs | Where-Object { $_.Id -notin $initialProcs.Id }
-    $stoppedProcs = $initialProcs | Where-Object { $_.Id -notin $finalProcs.Id }
+    $newProcs = $finalProcs | Where-Object { $_.Id -notin $initialProcs.Id }
+    $endedProcs = $initialProcs | Where-Object { $_.Id -notin $finalProcs.Id }
 
-    $startedServices = $finalServices | Where-Object { $_.Name -notin $initialServices.Name }
-    $stoppedServices = $initialServices | Where-Object { $_.Name -notin $finalServices.Name }
+    $newSvcs = $finalSvcs | Where-Object { $_.Name -notin $initialSvcs.Name }
+    $endedSvcs = $initialSvcs | Where-Object { $_.Name -notin $finalSvcs.Name }
 
-    Write-Host "`n=== 🧠 ACTIVITY LOG WHILE HD-PLAYER WAS RUNNING ===`n" -ForegroundColor Yellow
+    Write-Host "`n🧠 === ACTIVITY REPORT ===" -ForegroundColor Cyan
 
-    if ($startedProcs) {
-        Write-Host "`n🚀 Processes Started:" -ForegroundColor Green
-        $startedProcs | ForEach-Object { Write-Host " [+] $($_.Name) (PID: $($_.Id))" }
+    if ($newProcs) {
+        Write-Host "`n🚀 New Processes Started During HD-Player:"
+        $newProcs | ForEach-Object { Write-Host " [+] $($_.Name) (PID: $($_.Id))" }
     }
 
-    if ($stoppedProcs) {
-        Write-Host "`n🛑 Processes Terminated:" -ForegroundColor Red
-        $stoppedProcs | ForEach-Object { Write-Host " [-] $($_.Name) (PID: $($_.Id))" }
+    if ($endedProcs) {
+        Write-Host "`n❌ Processes Ended During HD-Player:"
+        $endedProcs | ForEach-Object { Write-Host " [-] $($_.Name) (PID: $($_.Id))" }
     }
 
-    if ($startedServices) {
-        Write-Host "`n🚀 Services Started:" -ForegroundColor Green
-        $startedServices | ForEach-Object { Write-Host " [+] $($_.DisplayName) ($($_.Name))" }
+    if ($newSvcs) {
+        Write-Host "`n🚀 New Services Started During HD-Player:"
+        $newSvcs | ForEach-Object { Write-Host " [+] $($_.DisplayName) ($($_.Name))" }
     }
 
-    if ($stoppedServices) {
-        Write-Host "`n🛑 Services Stopped:" -ForegroundColor Red
-        $stoppedServices | ForEach-Object { Write-Host " [-] $($_.DisplayName) ($($_.Name))" }
+    if ($endedSvcs) {
+        Write-Host "`n❌ Services Stopped During HD-Player:"
+        $endedSvcs | ForEach-Object { Write-Host " [-] $($_.DisplayName) ($($_.Name))" }
     }
 
-    if ($overlayCandidates.Count -gt 0) {
-        Write-Host "`n👁️ Possible Overlay/Background Processes Linked During HD-Player Runtime:" -ForegroundColor Cyan
-        $overlayCandidates | Sort-Object Id -Unique | ForEach-Object {
+    if ($runtimeOverlay.Count -gt 0) {
+        Write-Host "`n👁️ Suspected Background/Overlay Processes During HD-Player:"
+        $runtimeOverlay | Sort-Object Id -Unique | ForEach-Object {
             Write-Host " [~] $($_.Name) (PID: $($_.Id))"
         }
     } else {
-        Write-Host "`n❌ No suspected overlay/background processes found during runtime." -ForegroundColor Gray
+        Write-Host "`n✅ No overlay/background process detected." -ForegroundColor Gray
     }
 
-    Write-Host "`n👑 Report generated by: GOD AKSHIT | CODERS CORP ///: discord.gg/hindustan" -ForegroundColor Magenta
+    Write-Host "`n👑 Credit: GOD AKSHIT | CODERS CORP /// discord.gg/hindustan" -ForegroundColor Magenta
 }
 
-# Run the monitor function
+# Execute
+Create-StealthIMGUI
 Monitor-HDPlayer
 
